@@ -1406,7 +1406,12 @@ footer.wrap{padding-block:0 40px;font-size:11.5px;color:var(--muted);display:gri
       var k=normNome(e.name);
       for(var i=0;i<querido.length;i++){
         if(normNome(querido[i])===k && !achado[k]){
-          achado[k]=true; out.push({ordem:i, file:await e.getFile()});
+          achado[k]=true;
+          var fl=await e.getFile();
+          /* o handle vai junto: se o Excel salvar no meio da leitura, e por ele que
+             pedimos o arquivo de novo (ver lerArquivo) */
+          try{ fl.__handle=e }catch(_){}
+          out.push({ordem:i, file:fl});
         }
       }
     }
@@ -1469,13 +1474,34 @@ footer.wrap{padding-block:0 40px;font-size:11.5px;color:var(--muted);display:gri
     });
   }
 
-  function lerArquivo(f){
+  function lerUmaVez(f){
     return new Promise(function(ok,erro){
       var r=new FileReader();
       r.onload=function(){ok(new Uint8Array(r.result))};
-      r.onerror=function(){erro(new Error("falha ao ler "+f.name))};
+      r.onerror=function(){erro(r.error||new Error("falha ao ler "+f.name))};
       r.readAsArrayBuffer(f);
     });
+  }
+  /* As tres folhas ficam ABERTAS no Excel o dia inteiro. Salvar troca o arquivo no
+     disco, e o File que o navegador ja tinha em maos deixa de valer na hora -- o
+     FileReader morre com NotReadableError no meio da leitura (acontece com a folha
+     do Presencial enquanto a do EAD, de 22 MB, ainda esta sendo lida). Entao pedimos
+     o arquivo de novo ao handle e tentamos mais uma vez antes de desistir. */
+  async function lerArquivo(f){
+    try{ return await lerUmaVez(f); }
+    catch(e){
+      if(f.__handle){
+        logar("   o arquivo mudou no disco durante a leitura; pegando a versão nova…");
+        try{
+          var novo=await f.__handle.getFile();
+          try{ novo.__handle=f.__handle }catch(_){}
+          return await lerUmaVez(novo);
+        }catch(e2){ e=e2; }
+      }
+      throw new Error("falha ao ler "+f.name+" ("+((e&&e.name)||"erro")+"). "+
+        "Quase sempre é a planilha sendo salva no Excel neste instante: termine de salvar, "+
+        "feche o arquivo e clique de novo.");
+    }
   }
 
   function linhasDa(wb,nome){
